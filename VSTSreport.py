@@ -24,16 +24,17 @@ parser.add_argument('-p', '--projects', help='Read a list of projects from a loc
 parser.add_argument('-s', '--start_date', help='Set a start date for the audit range. Format should be: YYYY-MM-DD. Defaults to 7 days ago.', type=str)
 parser.add_argument('-t', '--token', help='Specify a file containing the Azure DevOps API access token. Defaults to \'token\',', type=str, default='token')
 parser.add_argument('-v', '--version', help='Display version information and exit.', action='store_true')
+parser.add_argument('-u', '--username', help='Search based on a username.', type=str)
 args = parser.parse_args()
-
 
 client = VstsClient(api_address, token)
 projects = client.get_projects(StateFilter.WELL_FORMED)
 start_date = date.today() - timedelta(days = args.from_date)
 end_date = date.today()
-str_start_date = '{}/{}/{}+12:00:00+AM'.format(start_date.month, start_date.day, start_date.year)
-str_end_date = '{}/{}/{}+11:59:59+PM'.format(end_date.month, end_date.day, end_date.year)
-
+#str_start_date = '{}/{}/{}+12:00:00+AM'.format(start_date.month, start_date.day, start_date.year)
+#str_end_date = '{}/{}/{}+11:59:59+PM'.format(end_date.month, end_date.day, end_date.year)
+str_start_date = '{}+12:00:00+AM'.format(args.start_date)
+str_end_date = '{}+11:59:59+PM'.format(args.end_date)
 
 def get_pusher_details(client, url):
 	# push detail URLs are like:
@@ -45,7 +46,6 @@ def get_pusher_details(client, url):
 	commit_id = parts[10]
 
 	query = 'api-version={}'.format(api_vers)
-
 	request = HTTPRequest()
 	request.method = 'GET'
 	request.path = '/{}/_apis/git/repositories/{}/commits/{}?{}'.format(project_id, repo_id, commit_id, query)
@@ -53,21 +53,25 @@ def get_pusher_details(client, url):
 
 	return client._perform_request(request)
 
-def get_commits_by_user(client, project_name, repo_name, start_date, end_date, username):
+def get_commits_by_user(client, project_name, repo_id, start_date, end_date, username):
 #	query = 'searchCriteria.fromDate={}&searchCriteria.toDate={}&$top=1000&api-version={}'.format(start_date, end_date, api_vers);
-	query = 'searchCriteria.uthor={}&searchCriteria.fromDate={}&searchCriteria.toDate={}&$top=1000&api-version={}'.format(username, start_date, end_date, api_vers);
-
+	query = 'searchCriteria.author={}&searchCriteria.fromDate={}&searchCriteria.toDate={}&$top=10000&api-version={}'.format(username, start_date, end_date, api_vers);
+#	query = 'searchCriteria.uthor={}&$top=1000&api-version={}'.format(username, api_vers);
+#	print( '/_apis/git/repositories/{}/commits?{}'.format(repo_id, query))
+# https://dev.azure.com/heartland-vsts/_apis/git/repositories/5af798f1-6953-42dd-9a88-56e81109d586/commits?searchCriteria.author=Gil.Gerassi@globalpay.com&api-version=4.1
 # https://dev.azure.com/heartland-vsts/_apis/git/repositories/5af798f1-6953-42dd-9a88-56e81109d586/commits?searchCriteria.author=Gil.Gerassi@globalpay.com&api-version=4.1
 
 	request = HTTPRequest()
 	request.method = 'GET'
-	request.path = '/{}/_apis/git/repositories/{}/commits?{}'.format(project_name, repo_name, query)
+#	request.path = '/{}/_apis/git/repositories/{}/commits?{}'.format(project_name, repo_name, query)
+	request.path = '/_apis/git/repositories/{}/commits?{}'.format(repo_id, query)
 	request.headers = {'content-type': 'application/json'}
 
 	return client._perform_request(request)
 
 def get_commits(client, project_name, repo_name, start_date, end_date):
-	query = 'searchCriteria.fromDate={}&searchCriteria.toDate={}&$top=1000&api-version={}'.format(start_date, end_date, api_vers);
+#	query = 'searchCriteria.fromDate={}&searchCriteria.toDate={}&$top=1000&api-version={}'.format(start_date, end_date, api_vers);
+	query = '&api-version={}'.format(api_vers);
 #	print ("query = " + query)
 	request = HTTPRequest()
 	request.method = 'GET'
@@ -104,7 +108,7 @@ for project in projects:
 	print('+ Searching {} repositories in project {}.'.format(str(len(repos)), project.name))
 	print('====================================')
 	for repo in repos:
-		commits_raw = get_commits(client, project.name, repo['name'], str_start_date, str_end_date)
+		commits_raw = get_commits_by_user(client, project.name, repo['id'], str_start_date, str_end_date, args.username)
 #		commits_raw = get_commits_by_user(client, project.name, repo['name'], str_start_date, str_end_date, 'gil.gerassi@globalpay.com')
 		commits_json = json.dumps(commits_raw)
 		commits = json.loads(commits_json)['value']
@@ -116,22 +120,24 @@ for project in projects:
 			push = json.loads(push_json)
 			committer_email = ""
 			pushed_by = ""
+
 			if 'email' in push['committer']:
 				committer_email = push['committer']['email']
 			else:
 				committer_email = push['committer']['name']
 			if 'uniqueName' in push['push']['pushedBy']:
 				pushed_by = push['push']['pushedBy']['uniqueName']
-				if committer_email.lower() != pushed_by.lower():
-					date_parts = push['push']['date'].split('.')
-					pretty_date = date_parts[0].replace('T', ' ')
-					print(pretty_date + " "  + project.name + " " + repo['name'] + " " + push['commitId'] + " " + committer_email + " " + pushed_by)
+#				if committer_email.lower() != pushed_by.lower():
+				date_parts = push['push']['date'].split('.')
+				pretty_date = date_parts[0].replace('T', ' ')
+#				print(pretty_date + " "  + project.name + " " + repo['name'] + " " + push['commitId'] + " " + committer_email + " " + pushed_by)
 #			report.problems.append(ComplianceEvent(pretty_date, project.name, repo['name'], push['commitId'], committer_email, pushed_by))
 #					print(committer_email + " " + pushed_by)
-#					if (pushed_by=="gil.gerassi@globalpay.com" or pushed_by=="Gil.Gerassi@globalpay.com" or pushed_by=="Gil Gerassi" or committer_email=="Gil.Gerassi@globalpay.com" or committer_email=="gil.gerassi@globalpay.com"):
-#					if pushed_by=="Rahul.Dabi@e-hps.com":
-#						print(pretty_date + " "  + project.name + " " + repo['name'] + " " + push['commitId'] + " " + committer_email + " " + pushed_by)
+#				if (pushed_by=="gil.gerassi@globalpay.com" or pushed_by=="Gil.Gerassi@globalpay.com" or pushed_by=="Gil Gerassi" or committer_email=="Gil.Gerassi@globalpay.com" or committer_email=="gil.gerassi@globalpay.com"):
+#				if (pushed_by==args.username or pushed_by==args.username or committer_email==args.username or committer_email==args.username):
+
+#				if pushed_by=="Rahul.Dabi@e-hps.com":
+				print(pretty_date + " "  + project.name + " " + repo['name'] + " " + push['commitId'] + " " + committer_email + " " + pushed_by)
 
         # GET https://dev.azure.com/heartland-vsts/_apis/git/repositories/1a506981-dab7-49e1-ac7e-0043a0ab58e5/commits?api-version=4.1
         # GET https://dev.azure.com/heartland-vsts/_apis/git/repositories/5af798f1-6953-42dd-9a88-56e81109d586/commits?searchCriteria.author=Gil Gerassi&api-version=4.1
-
